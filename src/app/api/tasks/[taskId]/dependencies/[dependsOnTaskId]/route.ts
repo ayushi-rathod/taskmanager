@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { removeDependency, TaskDependencyError, TaskDependencyNotFoundError } from "@/server/dependencies/dependency.service";
-import { validateTaskId } from "@/server/tasks/task.validation";
+import { TaskValidationError, validateTaskId } from "@/server/tasks/task.validation";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +12,10 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ taskId:
     await removeDependency(taskId, dependsOnTaskId);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
+    if (error instanceof TaskValidationError) {
+      return NextResponse.json({ code: "INVALID_DEPENDENCY", message: error.message }, { status: 400 });
+    }
+
     if (error instanceof TaskDependencyError) {
       const status = error.code === "TASK_NOT_FOUND" ? 404 : 500;
       return NextResponse.json({ code: error.code, message: error.message }, { status });

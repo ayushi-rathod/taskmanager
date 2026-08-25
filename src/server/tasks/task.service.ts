@@ -128,10 +128,6 @@ function buildTaskChanges(previousTask: SerializedTask, nextTask: SerializedTask
     changes.assignees = nextTask.assignees;
   }
 
-  if (previousTask.version !== nextTask.version) {
-    changes.version = nextTask.version;
-  }
-
   return changes;
 }
 

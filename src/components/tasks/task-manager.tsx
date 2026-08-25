@@ -30,6 +30,17 @@ type DependencyItem = {
   };
 };
 
+type CommentItem = {
+  id: string;
+  taskId: string;
+  content: string;
+  author: {
+    id: string;
+    name: string;
+  };
+  createdAt: string;
+};
+
 type TaskFormState = {
   title: string;
   status: "TODO" | "IN_PROGRESS" | "DONE";
@@ -105,6 +116,20 @@ export function TaskManager({ projectId }: { projectId: string }) {
   const [staleMessage, setStaleMessage] = useState("");
   const [dependencyForm, setDependencyForm] = useState<Record<string, string>>({});
   const [dependencyMap, setDependencyMap] = useState<Record<string, DependencyItem[]>>({});
+  const [commentsByTask, setCommentsByTask] = useState<Record<string, CommentItem[]>>({});
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [commentAuthorByTask, setCommentAuthorByTask] = useState<Record<string, string>>({});
+  const [commentPendingByTask, setCommentPendingByTask] = useState<Record<string, boolean>>({});
+  const [commentErrors, setCommentErrors] = useState<Record<string, string>>({});
+
+  const loadTaskComments = useCallback(async (taskId: string) => {
+    const response = await fetch(`/api/tasks/${taskId}/comments`);
+    if (!response.ok) {
+      return [] as CommentItem[];
+    }
+    const payload = await response.json();
+    return (payload.comments ?? []) as CommentItem[];
+  }, []);
 
   const loadTaskDependencies = useCallback(async (taskId: string) => {
     const response = await fetch(`/api/tasks/${taskId}/dependencies`);
@@ -140,20 +165,43 @@ export function TaskManager({ projectId }: { projectId: string }) {
         }))
       );
 
+      const commentsEntries = await Promise.all(
+        resolvedTasks.map(async (task: TaskItem) => ({
+          taskId: task.id,
+          comments: await loadTaskComments(task.id),
+        }))
+      );
+
       const nextDependencyMap = dependencyEntries.reduce<Record<string, DependencyItem[]>>((accumulator, entry) => {
         accumulator[entry.taskId] = entry.dependencies;
         return accumulator;
       }, {});
 
+      const nextCommentsByTask = commentsEntries.reduce<Record<string, CommentItem[]>>((accumulator, entry) => {
+        accumulator[entry.taskId] = entry.comments;
+        return accumulator;
+      }, {});
+
       setTasks(resolvedTasks);
       setDependencyMap(nextDependencyMap);
+      setCommentsByTask(nextCommentsByTask);
       setUsers(usersPayload.users ?? []);
+
+      setCommentAuthorByTask((current) => {
+        const next = { ...current };
+        for (const task of resolvedTasks) {
+          if (!next[task.id] && usersPayload.users?.[0]?.id) {
+            next[task.id] = usersPayload.users[0].id;
+          }
+        }
+        return next;
+      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load tasks.");
     } finally {
       setLoading(false);
     }
-  }, [loadTaskDependencies, projectId]);
+  }, [loadTaskComments, loadTaskDependencies, projectId]);
 
   useEffect(() => {
     void loadTasks();
@@ -170,6 +218,7 @@ export function TaskManager({ projectId }: { projectId: string }) {
           version?: number;
           changes?: Record<string, unknown>;
           taskId?: string;
+          comment?: CommentItem;
         };
       }>;
 
@@ -240,6 +289,27 @@ export function TaskManager({ projectId }: { projectId: string }) {
         }
 
         setTasks((currentTasks) => currentTasks.filter((existingTask) => existingTask.id !== taskId));
+        return;
+      }
+
+      if (payload.type === "comment.created") {
+        const comment = payload.data?.comment;
+        const taskId = payload.data?.taskId ?? comment?.taskId;
+        if (!comment || !taskId) {
+          return;
+        }
+
+        setCommentsByTask((currentMap) => {
+          const existing = currentMap[taskId] ?? [];
+          if (existing.some((entry) => entry.id === comment.id)) {
+            return currentMap;
+          }
+
+          return {
+            ...currentMap,
+            [taskId]: [...existing, comment].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+          };
+        });
       }
     };
 
@@ -376,6 +446,48 @@ export function TaskManager({ projectId }: { projectId: string }) {
       setError(deleteError instanceof Error ? deleteError.message : "Task could not be deleted.");
     } finally {
       setDeleteId(null);
+    }
+  };
+
+  const handleCreateComment = async (taskId: string) => {
+    const authorId = commentAuthorByTask[taskId] ?? users[0]?.id;
+    const content = (commentDrafts[taskId] ?? "").trim();
+
+    if (!authorId) {
+      setCommentErrors((current) => ({ ...current, [taskId]: "No author is available for this comment." }));
+      return;
+    }
+
+    if (!content) {
+      setCommentErrors((current) => ({ ...current, [taskId]: "Comment content cannot be empty." }));
+      return;
+    }
+
+    setCommentPendingByTask((current) => ({ ...current, [taskId]: true }));
+    setCommentErrors((current) => ({ ...current, [taskId]: "" }));
+
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authorId, content }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.message || "Comment could not be created.");
+      }
+
+      setCommentDrafts((current) => ({ ...current, [taskId]: "" }));
+      const nextComments = await loadTaskComments(taskId);
+      setCommentsByTask((current) => ({ ...current, [taskId]: nextComments }));
+    } catch (commentError) {
+      setCommentErrors((current) => ({
+        ...current,
+        [taskId]: commentError instanceof Error ? commentError.message : "Comment could not be created.",
+      }));
+    } finally {
+      setCommentPendingByTask((current) => ({ ...current, [taskId]: false }));
     }
   };
 
@@ -688,6 +800,71 @@ export function TaskManager({ projectId }: { projectId: string }) {
 
                         <div style={{ marginTop: 8 }}>
                           <strong>Assignees:</strong> {task.assignees.length > 0 ? task.assignees.map((assignee) => assignee.name).join(", ") : "Unassigned"}
+                        </div>
+
+                        <div style={{ marginTop: 16, borderTop: "1px solid #e2e8f0", paddingTop: 12 }}>
+                          <h4 style={{ margin: "0 0 8px" }}>Comments</h4>
+                          {(commentsByTask[task.id] ?? []).length > 0 ? (
+                            <div style={{ display: "grid", gap: 8 }}>
+                              {(commentsByTask[task.id] ?? []).map((comment) => (
+                                <div key={comment.id} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "0.75rem" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                                    <strong>{comment.author.name}</strong>
+                                    <span style={{ fontSize: 12, color: "#64748b" }}>
+                                      {new Date(comment.createdAt).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div>{comment.content}</div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ color: "#64748b" }}>No comments yet.</div>
+                          )}
+
+                          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                            <label>
+                              <div style={{ marginBottom: 6 }}>Comment as</div>
+                              <select
+                                value={commentAuthorByTask[task.id] ?? users[0]?.id ?? ""}
+                                onChange={(event) =>
+                                  setCommentAuthorByTask((current) => ({
+                                    ...current,
+                                    [task.id]: event.target.value,
+                                  }))
+                                }
+                                style={inputStyle}
+                              >
+                                {users.map((user) => (
+                                  <option key={user.id} value={user.id}>
+                                    {user.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <textarea
+                              value={commentDrafts[task.id] ?? ""}
+                              onChange={(event) =>
+                                setCommentDrafts((current) => ({
+                                  ...current,
+                                  [task.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Write a comment…"
+                              style={{ ...inputStyle, minHeight: 86 }}
+                            />
+
+                            {commentErrors[task.id] ? <div style={errorBoxStyle}>{commentErrors[task.id]}</div> : null}
+
+                            <button
+                              onClick={() => handleCreateComment(task.id)}
+                              disabled={commentPendingByTask[task.id] || !(commentDrafts[task.id] ?? "").trim()}
+                              style={primaryButtonStyle}
+                            >
+                              {commentPendingByTask[task.id] ? "Adding comment..." : "Add Comment"}
+                            </button>
+                          </div>
                         </div>
                       </div>
 

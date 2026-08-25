@@ -29,7 +29,15 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json();
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json(
+        { code: "INVALID_PROJECT", message: "Request body must be valid JSON." },
+        { status: 400 }
+      );
+    }
 
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return NextResponse.json(
@@ -48,11 +56,25 @@ export async function POST(request: Request) {
       );
     }
 
+    if (record.description !== undefined && record.description !== null && typeof record.description !== "string") {
+      return NextResponse.json(
+        { code: "INVALID_PROJECT", message: "Project description must be a string or null." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      record.metadata !== undefined &&
+      (typeof record.metadata !== "object" || record.metadata === null || Array.isArray(record.metadata))
+    ) {
+      return NextResponse.json(
+        { code: "INVALID_PROJECT", message: "Project metadata must be a JSON object." },
+        { status: 400 }
+      );
+    }
+
     const description = typeof record.description === "string" ? record.description : null;
-    const metadata: Prisma.InputJsonValue =
-      record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
-        ? (record.metadata as Prisma.InputJsonValue)
-        : {};
+    const metadata = (record.metadata ?? {}) as Prisma.InputJsonValue;
 
     const project = await prisma.project.create({
       data: { name, description, metadata },

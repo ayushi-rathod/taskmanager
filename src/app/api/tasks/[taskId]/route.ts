@@ -12,6 +12,7 @@ import {
   validateTaskId,
   validateUpdateTaskInput,
 } from "@/server/tasks/task.validation";
+import { TaskDependencyError } from "@/server/dependencies/dependency.service";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ta
 
     if (error instanceof InvalidAssigneeError) {
       return NextResponse.json({ code: "INVALID_ASSIGNEE", message: "One or more assignees do not exist." }, { status: 400 });
+    }
+
+    if (error instanceof TaskDependencyError) {
+      return NextResponse.json({ code: error.code, message: error.message }, { status: 422 });
     }
 
     return NextResponse.json({ code: "INTERNAL_ERROR", message: "Unexpected failure." }, { status: 500 });

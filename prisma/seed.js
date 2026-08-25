@@ -28,10 +28,10 @@ async function main() {
   }
 
   const designApi = await prisma.task.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000001' },
+    where: { id: '00000000-0000-4000-8000-000000000001' },
     update: {},
     create: {
-      id: '00000000-0000-0000-0000-000000000001',
+      id: '00000000-0000-4000-8000-000000000001',
       projectId: project.id,
       title: 'Design API',
       status: 'DONE',
@@ -44,10 +44,10 @@ async function main() {
   });
 
   const buildBackend = await prisma.task.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000002' },
+    where: { id: '00000000-0000-4000-8000-000000000002' },
     update: {},
     create: {
-      id: '00000000-0000-0000-0000-000000000002',
+      id: '00000000-0000-4000-8000-000000000002',
       projectId: project.id,
       title: 'Build Backend',
       status: 'IN_PROGRESS',
@@ -60,10 +60,10 @@ async function main() {
   });
 
   const buildFrontend = await prisma.task.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000003' },
+    where: { id: '00000000-0000-4000-8000-000000000003' },
     update: {},
     create: {
-      id: '00000000-0000-0000-0000-000000000003',
+      id: '00000000-0000-4000-8000-000000000003',
       projectId: project.id,
       title: 'Build Frontend',
       status: 'TODO',
@@ -110,10 +110,10 @@ async function main() {
   });
 
   await prisma.comment.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000010' },
+    where: { id: '00000000-0000-4000-8000-000000000010' },
     update: {},
     create: {
-      id: '00000000-0000-0000-0000-000000000010',
+      id: '00000000-0000-4000-8000-000000000010',
       taskId: buildBackend.id,
       content: 'I will review the API contract.',
       authorId: joaquin.id,

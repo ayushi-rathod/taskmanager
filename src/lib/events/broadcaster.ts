@@ -42,4 +42,13 @@ class ProjectEventBroadcaster {
   }
 }
 
-export const projectEventBroadcaster = new ProjectEventBroadcaster();
+const globalForBroadcaster = globalThis as unknown as {
+  projectEventBroadcaster?: ProjectEventBroadcaster;
+};
+
+export const projectEventBroadcaster =
+  globalForBroadcaster.projectEventBroadcaster ?? new ProjectEventBroadcaster();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForBroadcaster.projectEventBroadcaster = projectEventBroadcaster;
+}
