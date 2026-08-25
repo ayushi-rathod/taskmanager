@@ -4,8 +4,8 @@ import { isValidUuid } from "@/server/tasks/task.validation";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_: Request, { params }: { params: { projectId: string } }) {
-  const projectId = params.projectId;
+export async function GET(_: Request, { params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = await params;
 
   if (!isValidUuid(projectId)) {
     return NextResponse.json(

@@ -10,10 +10,11 @@ import { validateCreateTaskInput, validateProjectId, TaskValidationError } from 
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_: Request, { params }: { params: { projectId: string } }) {
+export async function GET(_: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
-    validateProjectId(params.projectId);
-    const tasks = await listProjectTasks(params.projectId);
+    const { projectId } = await params;
+    validateProjectId(projectId);
+    const tasks = await listProjectTasks(projectId);
     return NextResponse.json({ tasks });
   } catch (error) {
     if (error instanceof TaskValidationError) {
@@ -28,9 +29,10 @@ export async function GET(_: Request, { params }: { params: { projectId: string 
   }
 }
 
-export async function POST(request: Request, { params }: { params: { projectId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
-    validateProjectId(params.projectId);
+    const { projectId } = await params;
+    validateProjectId(projectId);
 
     let payload: unknown;
     try {
@@ -40,7 +42,7 @@ export async function POST(request: Request, { params }: { params: { projectId: 
     }
 
     const input = validateCreateTaskInput(payload);
-    const task = await createTask(params.projectId, input);
+    const task = await createTask(projectId, input);
 
     return NextResponse.json({ task }, { status: 201 });
   } catch (error) {

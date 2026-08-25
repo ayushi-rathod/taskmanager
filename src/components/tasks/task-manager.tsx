@@ -21,6 +21,15 @@ export type TaskItem = {
 
 type UserOption = { id: string; name: string };
 
+type DependencyItem = {
+  taskId: string;
+  dependsOnTask: {
+    id: string;
+    title: string;
+    status: string;
+  };
+};
+
 type TaskFormState = {
   title: string;
   status: "TODO" | "IN_PROGRESS" | "DONE";
@@ -94,6 +103,17 @@ export function TaskManager({ projectId }: { projectId: string }) {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [staleMessage, setStaleMessage] = useState("");
+  const [dependencyForm, setDependencyForm] = useState<Record<string, string>>({});
+  const [dependencyMap, setDependencyMap] = useState<Record<string, DependencyItem[]>>({});
+
+  const loadTaskDependencies = useCallback(async (taskId: string) => {
+    const response = await fetch(`/api/tasks/${taskId}/dependencies`);
+    if (!response.ok) {
+      return [] as DependencyItem[];
+    }
+    const payload = await response.json();
+    return payload.dependencies ?? [];
+  }, []);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -111,15 +131,29 @@ export function TaskManager({ projectId }: { projectId: string }) {
 
       const tasksPayload = await tasksResponse.json();
       const usersPayload = await usersResponse.json();
+      const resolvedTasks = tasksPayload.tasks ?? [];
 
-      setTasks(tasksPayload.tasks ?? []);
+      const dependencyEntries = await Promise.all(
+        resolvedTasks.map(async (task: TaskItem) => ({
+          taskId: task.id,
+          dependencies: await loadTaskDependencies(task.id),
+        }))
+      );
+
+      const nextDependencyMap = dependencyEntries.reduce<Record<string, DependencyItem[]>>((accumulator, entry) => {
+        accumulator[entry.taskId] = entry.dependencies;
+        return accumulator;
+      }, {});
+
+      setTasks(resolvedTasks);
+      setDependencyMap(nextDependencyMap);
       setUsers(usersPayload.users ?? []);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load tasks.");
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [loadTaskDependencies, projectId]);
 
   useEffect(() => {
     void loadTasks();
@@ -183,6 +217,13 @@ export function TaskManager({ projectId }: { projectId: string }) {
           return;
         }
 
+        if (response.status === 422) {
+          setError(result?.message || "Task cannot be completed while dependencies are incomplete.");
+          await loadTasks();
+          setEditingId(null);
+          return;
+        }
+
         throw new Error(result?.message || "Task could not be updated.");
       }
 
@@ -192,6 +233,41 @@ export function TaskManager({ projectId }: { projectId: string }) {
       setError(updateError instanceof Error ? updateError.message : "Task could not be updated.");
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const handleDependencyAdd = async (taskId: string) => {
+    if (!dependencyForm[taskId]) return;
+
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/dependencies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dependsOnTaskId: dependencyForm[taskId] }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.message || "Dependency could not be added.");
+      }
+
+      setDependencyForm((current) => ({ ...current, [taskId]: "" }));
+      await loadTasks();
+    } catch (dependencyError) {
+      setError(dependencyError instanceof Error ? dependencyError.message : "Dependency could not be added.");
+    }
+  };
+
+  const handleDependencyRemove = async (taskId: string, dependsOnTaskId: string) => {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/dependencies/${dependsOnTaskId}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("Dependency could not be removed.");
+      }
+
+      await loadTasks();
+    } catch (dependencyError) {
+      setError(dependencyError instanceof Error ? dependencyError.message : "Dependency could not be removed.");
     }
   };
 
@@ -472,6 +548,56 @@ export function TaskManager({ projectId }: { projectId: string }) {
                             {JSON.stringify(task.customFields, null, 2)}
                           </pre>
                         ) : null}
+
+                        <div style={{ marginTop: 10 }}>
+                          <strong>Dependencies:</strong>
+                          <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                            {(dependencyMap[task.id] ?? []).length > 0 ? (
+                              (dependencyMap[task.id] ?? []).map((dependency) => (
+                                <div key={dependency.taskId + dependency.dependsOnTask.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                                  <span>
+                                    {dependency.dependsOnTask.title} ({dependency.dependsOnTask.status})
+                                  </span>
+                                  <button
+                                    onClick={() => handleDependencyRemove(task.id, dependency.dependsOnTask.id)}
+                                    style={dangerButtonStyle}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ))
+                            ) : (
+                              <span style={{ color: "#64748b" }}>No dependencies</span>
+                            )}
+                          </div>
+
+                          <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                            {tasks
+                              .filter((candidate) => candidate.id !== task.id)
+                              .filter((candidate) => !(dependencyMap[task.id] ?? []).some((dependency) => dependency.dependsOnTask.id === candidate.id))
+                              .map((candidate) => (
+                                <label key={candidate.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <input
+                                    type="radio"
+                                    name={`dependency-${task.id}`}
+                                    checked={dependencyForm[task.id] === candidate.id}
+                                    onChange={() => setDependencyForm((current) => ({ ...current, [task.id]: candidate.id }))}
+                                  />
+                                  {candidate.title} ({candidate.status})
+                                </label>
+                              ))}
+                            {tasks.filter((candidate) => candidate.id !== task.id).filter((candidate) => !(dependencyMap[task.id] ?? []).some((dependency) => dependency.dependsOnTask.id === candidate.id)).length === 0 ? (
+                              <span style={{ color: "#64748b" }}>No remaining dependency candidates</span>
+                            ) : null}
+                          </div>
+
+                          {dependencyForm[task.id] ? (
+                            <button onClick={() => handleDependencyAdd(task.id)} style={{ ...secondaryButtonStyle, marginTop: 8 }}>
+                              Add dependency
+                            </button>
+                          ) : null}
+                        </div>
+
                         <div style={{ marginTop: 8 }}>
                           <strong>Assignees:</strong> {task.assignees.length > 0 ? task.assignees.map((assignee) => assignee.name).join(", ") : "Unassigned"}
                         </div>

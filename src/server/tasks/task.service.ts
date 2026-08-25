@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import { getTaskDependencies, TaskDependencyError } from "@/server/dependencies/dependency.service";
 import type { CreateTaskInput, TaskPriority, TaskStatus, UpdateTaskInput } from "./task.validation";
 
 export class ProjectNotFoundError extends Error {
@@ -174,6 +175,18 @@ export async function updateTask(taskId: string, expectedVersion: number, input:
 
   if (existingTask.version !== expectedVersion) {
     throw new TaskVersionConflictError();
+  }
+
+  if (input.status === "DONE") {
+    const dependencies = await getTaskDependencies(taskId);
+    const incompleteDependencies = dependencies.filter((dependency) => dependency.dependsOnTask.status !== "DONE");
+
+    if (incompleteDependencies.length > 0) {
+      throw new TaskDependencyError(
+        "Task cannot be completed while dependencies are incomplete.",
+        "INCOMPLETE_DEPENDENCIES"
+      );
+    }
   }
 
   const task = await prisma.$transaction(async (tx) => {

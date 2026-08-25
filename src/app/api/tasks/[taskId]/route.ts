@@ -15,10 +15,11 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_: Request, { params }: { params: { taskId: string } }) {
+export async function GET(_: Request, { params }: { params: Promise<{ taskId: string }> }) {
   try {
-    validateTaskId(params.taskId);
-    const task = await getTaskById(params.taskId);
+    const { taskId } = await params;
+    validateTaskId(taskId);
+    const task = await getTaskById(taskId);
     return NextResponse.json({ task });
   } catch (error) {
     if (error instanceof TaskValidationError) {
@@ -33,9 +34,10 @@ export async function GET(_: Request, { params }: { params: { taskId: string } }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { taskId: string } }) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
   try {
-    validateTaskId(params.taskId);
+    const { taskId } = await params;
+    validateTaskId(taskId);
 
     let payload: unknown;
     try {
@@ -45,7 +47,7 @@ export async function PATCH(request: Request, { params }: { params: { taskId: st
     }
 
     const input = validateUpdateTaskInput(payload);
-    const task = await updateTask(params.taskId, input.version, input);
+    const task = await updateTask(taskId, input.version, input);
     return NextResponse.json({ task });
   } catch (error) {
     if (error instanceof TaskValidationError) {
@@ -68,10 +70,11 @@ export async function PATCH(request: Request, { params }: { params: { taskId: st
   }
 }
 
-export async function DELETE(_: Request, { params }: { params: { taskId: string } }) {
+export async function DELETE(_: Request, { params }: { params: Promise<{ taskId: string }> }) {
   try {
-    validateTaskId(params.taskId);
-    await deleteTask(params.taskId);
+    const { taskId } = await params;
+    validateTaskId(taskId);
+    await deleteTask(taskId);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     if (error instanceof TaskValidationError) {
