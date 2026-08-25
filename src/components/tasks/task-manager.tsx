@@ -159,6 +159,94 @@ export function TaskManager({ projectId }: { projectId: string }) {
     void loadTasks();
   }, [loadTasks]);
 
+  useEffect(() => {
+    const handleProjectTaskEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        type?: string;
+        projectId?: string;
+        entityId?: string | null;
+        data?: {
+          task?: TaskItem;
+          version?: number;
+          changes?: Record<string, unknown>;
+          taskId?: string;
+        };
+      }>;
+
+      const payload = customEvent.detail;
+      if (!payload || payload.projectId !== projectId) {
+        return;
+      }
+
+      if (payload.type === "task.created") {
+        const task = payload.data?.task;
+        if (!task || !task.id) {
+          return;
+        }
+
+        setTasks((currentTasks) => {
+          if (currentTasks.some((existingTask) => existingTask.id === task.id)) {
+            return currentTasks;
+          }
+
+          return [...currentTasks, task].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        });
+        return;
+      }
+
+      if (payload.type === "task.updated") {
+        const taskId = payload.entityId ?? payload.data?.taskId;
+        if (!taskId) {
+          return;
+        }
+
+        const incomingVersion = payload.data?.version;
+
+        setTasks((currentTasks) => {
+          const index = currentTasks.findIndex((existingTask) => existingTask.id === taskId);
+          if (index === -1) {
+            return currentTasks;
+          }
+
+          const currentTask = currentTasks[index];
+          const version = typeof incomingVersion === "number" ? incomingVersion : currentTask.version;
+          if (version <= currentTask.version) {
+            return currentTasks;
+          }
+
+          const nextTask = { ...currentTask };
+          const changes = payload.data?.changes ?? {};
+
+          if (typeof changes.title === "string") nextTask.title = changes.title;
+          if (typeof changes.status === "string") nextTask.status = changes.status as TaskItem["status"];
+          if (typeof changes.priority === "string") nextTask.priority = changes.priority as TaskItem["priority"];
+          if (changes.description !== undefined) nextTask.description = changes.description as string | null;
+          if (Array.isArray(changes.tags)) nextTask.tags = changes.tags as string[];
+          if (changes.customFields && typeof changes.customFields === "object") nextTask.customFields = changes.customFields as Record<string, unknown>;
+          if (Array.isArray(changes.assignees)) nextTask.assignees = changes.assignees as TaskAssignee[];
+
+          nextTask.version = version;
+          nextTask.updatedAt = new Date().toISOString();
+
+          return currentTasks.map((existingTask) => (existingTask.id === taskId ? nextTask : existingTask));
+        });
+        return;
+      }
+
+      if (payload.type === "task.deleted") {
+        const taskId = payload.data?.taskId ?? payload.entityId;
+        if (!taskId) {
+          return;
+        }
+
+        setTasks((currentTasks) => currentTasks.filter((existingTask) => existingTask.id !== taskId));
+      }
+    };
+
+    window.addEventListener("project-task-event", handleProjectTaskEvent);
+    return () => window.removeEventListener("project-task-event", handleProjectTaskEvent);
+  }, [projectId]);
+
   const projectLabel = useMemo(() => {
     if (tasks.length === 0) {
       return "Project Tasks";

@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { createDomainEvent } from "@/lib/events/create-event";
+import { projectEventBroadcaster } from "@/lib/events/broadcaster";
 import { Prisma } from "@prisma/client";
 import { getTaskDependencies, TaskDependencyError } from "@/server/dependencies/dependency.service";
 import type { CreateTaskInput, TaskPriority, TaskStatus, UpdateTaskInput } from "./task.validation";
@@ -77,6 +79,60 @@ function serializeTask(task: {
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
   };
+}
+
+function sameAssigneeList(left: SerializedTask["assignees"], right: SerializedTask["assignees"]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((assignee, index) => assignee.id === right[index]?.id && assignee.name === right[index]?.name);
+}
+
+function sameTagList(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((tag, index) => tag === right[index]);
+}
+
+function buildTaskChanges(previousTask: SerializedTask, nextTask: SerializedTask): Record<string, unknown> {
+  const changes: Record<string, unknown> = {};
+
+  if (previousTask.title !== nextTask.title) {
+    changes.title = nextTask.title;
+  }
+
+  if (previousTask.status !== nextTask.status) {
+    changes.status = nextTask.status;
+  }
+
+  if (previousTask.priority !== nextTask.priority) {
+    changes.priority = nextTask.priority;
+  }
+
+  if (previousTask.description !== nextTask.description) {
+    changes.description = nextTask.description;
+  }
+
+  if (!sameTagList(previousTask.tags, nextTask.tags)) {
+    changes.tags = nextTask.tags;
+  }
+
+  if (JSON.stringify(previousTask.customFields) !== JSON.stringify(nextTask.customFields)) {
+    changes.customFields = nextTask.customFields;
+  }
+
+  if (!sameAssigneeList(previousTask.assignees, nextTask.assignees)) {
+    changes.assignees = nextTask.assignees;
+  }
+
+  if (previousTask.version !== nextTask.version) {
+    changes.version = nextTask.version;
+  }
+
+  return changes;
 }
 
 async function validateAssigneeIds(assigneeIds: string[], tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) {
@@ -163,11 +219,19 @@ export async function createTask(projectId: string, input: CreateTaskInput): Pro
     });
   });
 
-  return serializeTask(task);
+  const createdTask = serializeTask(task);
+  projectEventBroadcaster.publish(
+    createDomainEvent("task.created", createdTask.projectId, { task: createdTask }, createdTask.id)
+  );
+
+  return createdTask;
 }
 
 export async function updateTask(taskId: string, expectedVersion: number, input: UpdateTaskInput): Promise<SerializedTask> {
-  const existingTask = await prisma.task.findUnique({ where: { id: taskId } });
+  const existingTask = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { assignees: { include: { user: true } } },
+  });
 
   if (!existingTask) {
     throw new TaskNotFoundError();
@@ -233,15 +297,36 @@ export async function updateTask(taskId: string, expectedVersion: number, input:
     }
   });
 
-  return serializeTask(task);
+  const previousTask = serializeTask(existingTask);
+  const updatedTask = serializeTask(task);
+  const changes = buildTaskChanges(previousTask, updatedTask);
+
+  projectEventBroadcaster.publish(
+    createDomainEvent(
+      "task.updated",
+      updatedTask.projectId,
+      { version: updatedTask.version, changes },
+      updatedTask.id
+    )
+  );
+
+  return updatedTask;
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
-  const task = await prisma.task.findUnique({ where: { id: taskId } });
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { assignees: { include: { user: true } } },
+  });
 
   if (!task) {
     throw new TaskNotFoundError();
   }
 
   await prisma.task.delete({ where: { id: taskId } });
+
+  const deletedTask = serializeTask(task);
+  projectEventBroadcaster.publish(
+    createDomainEvent("task.deleted", deletedTask.projectId, { taskId: deletedTask.id }, deletedTask.id)
+  );
 }

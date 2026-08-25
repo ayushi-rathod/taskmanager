@@ -11,10 +11,17 @@ export function ProjectEventStream({ projectId }: { projectId: string }) {
 
     const handleIncomingEvent = (event: MessageEvent<string>) => {
       try {
-        const payload = JSON.parse(event.data) as { type?: string; projectId?: string };
+        const payload = JSON.parse(event.data) as { type?: string; projectId?: string; entityId?: string | null; data?: unknown };
+
         if (payload.type === "system.test") {
           console.info("[realtime] system.test received", payload);
         }
+
+        window.dispatchEvent(
+          new CustomEvent("project-task-event", {
+            detail: payload,
+          })
+        );
       } catch (error) {
         console.warn("[realtime] invalid event payload", error);
       }
