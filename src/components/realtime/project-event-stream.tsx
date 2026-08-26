@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { EVENT_TYPES } from "@/lib/events/types";
+
 export function ProjectEventStream({ projectId }: { projectId: string }) {
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "reconnecting" | "offline">("connecting");
   const hasConnectedRef = useRef(false);
@@ -36,11 +38,17 @@ export function ProjectEventStream({ projectId }: { projectId: string }) {
     };
 
     eventSource.onmessage = handleIncomingEvent;
+    for (const eventType of EVENT_TYPES) {
+      eventSource.addEventListener(eventType, handleIncomingEvent);
+    }
     eventSource.onerror = () => {
       setConnectionState(eventSource.readyState === EventSource.CLOSED ? "offline" : "reconnecting");
     };
 
     return () => {
+      for (const eventType of EVENT_TYPES) {
+        eventSource.removeEventListener(eventType, handleIncomingEvent);
+      }
       eventSource.close();
     };
   }, [projectId]);

@@ -17,3 +17,13 @@ export type EventType =
   | "dependency.created"
   | "dependency.deleted"
   | "comment.created";
+
+export const EVENT_TYPES: EventType[] = [
+  "system.test",
+  "task.created",
+  "task.updated",
+  "task.deleted",
+  "dependency.created",
+  "dependency.deleted",
+  "comment.created",
+];
